@@ -40,8 +40,17 @@ upload the new repository files to the web server repository
 **************************************************************************************
 Build the installer
 -------------------
-Build the online installer: 
+NOTE: Use Qt Installer Framework 4.0 or newer (check with: binarycreator --version).
+From 4.0 the "install" command runs fully unattended with no GUI, which is
+required for the silent install command shown below.
+
+Build the online installer:
 binarycreator.exe --online-only -c config\config.xml -p packages XyGrib_Win_Online_Installer_v1.2.0.exe
 
 Build the offline installer:
 binarycreator.exe --offline-only -c config\config.xml -e org.opengribs.xygrib.maps -p packages XyGrib_Win_Offline_Installer_v1.2.0.exe
+
+Silent / unattended install
+---------------------------
+With a QtIFW 4.0+ installer, end users can install with no GUI at all:
+XyGrib_Win_Online_Installer_v1.2.0.exe install --accept-licenses --accept-messages --confirm-command --default-answer
