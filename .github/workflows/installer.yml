@@ -1,0 +1,146 @@
+name: Windows installer
+
+# Builds the Windows app, packages it into a Qt Installer Framework (QtIFW 4.x)
+# installer, smoke-tests a fully silent install, and publishes the installers to
+# a rolling "latest" pre-release.
+#
+# Triggered on merge to main, or manually (workflow_dispatch) so it can be tested
+# without a merge. Manual runs can opt out of publishing via the "publish" input.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish installers to the 'latest' release"
+        type: boolean
+        default: true
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write   # needed to update the 'latest' release
+
+env:
+  QT_VERSION: 5.13.2
+  THIRDPARTY_URL: https://github.com/opengribs/Xygrib-lib/releases/download/1.0/thirdpartylib.zip
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      # Qt 5.13.2 (MinGW 7.3, 32-bit) to match the appveyor toolchain and the
+      # prebuilt thirdparty libraries, plus the MinGW compiler and QtIFW 4.x tools.
+      - name: Install Qt, MinGW and Qt Installer Framework
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win32_mingw73
+          tools: tools_ifw tools_mingw,qt.tools.win32_mingw730
+          cache: true
+
+      - name: Put MinGW and QtIFW tools on PATH
+        shell: bash
+        run: |
+          echo "$IQTA_TOOLS/mingw730_32/bin" >> "$GITHUB_PATH"
+          # tools_ifw installs binarycreator/repogen under a versioned bin dir
+          find "$IQTA_TOOLS" -type d -name bin -path '*QtIFW*' -print >> "$GITHUB_PATH"
+          echo "EXTERNLIBS=/c/opt" >> "$GITHUB_ENV"
+
+      - name: Fetch prebuilt thirdparty libraries
+        shell: bash
+        run: |
+          curl -fL "$THIRDPARTY_URL" -o thirdpartylib.zip
+          7z x -y thirdpartylib.zip -oC:/opt
+
+      - name: Configure and build XyGrib
+        shell: bash
+        run: |
+          mkdir -p build && cd build
+          cmake -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release ..
+          cmake --build . --config Release -j
+
+      # Assemble the QtIFW package tree: deploy the exe + runtime into the core
+      # package, and the static data into the data package. Maps are excluded
+      # (huge GSHHS set, default-off, not in the repo).
+      - name: Assemble installer packages
+        shell: bash
+        run: |
+          set -e
+          ROOT="$PWD"
+          PKG="$ROOT/win_online_installer/packages"
+          CORE="$PKG/org.opengribs.xygrib.core.win"
+          DATA="$PKG/org.opengribs.xygrib.data"
+
+          mkdir -p deploy
+          cp build/src/XyGrib.exe deploy/
+          windeployqt --no-translations --release --no-opengl-sw deploy/XyGrib.exe
+          # libopenjp2 is linked dynamically and not pulled in by windeployqt
+          find /c/opt -iname 'libopenjp2*.dll' -exec cp {} deploy/ \;
+          # MinGW runtime so the app is self-contained
+          MINGW_BIN="$IQTA_TOOLS/mingw730_32/bin"
+          for dll in libgcc_s_dw2-1 libstdc++-6 libwinpthread-1; do
+            [ -f "$MINGW_BIN/$dll.dll" ] && cp "$MINGW_BIN/$dll.dll" deploy/
+          done
+
+          # core package: exe + runtime live at the install root (flat)
+          cp -rf deploy/. "$CORE/data/"
+          cp LICENSE "$CORE/data/"
+          cp README.md "$CORE/data/"
+          # license shown on the (auto-accepted) license page
+          cp LICENSE "$CORE/meta/license.txt"
+
+          # data package: app expects a 'data' folder next to the exe
+          mkdir -p "$DATA/data/data"
+          cp -rf data/. "$DATA/data/data/"
+
+      - name: Build offline installer
+        shell: bash
+        run: |
+          cd win_online_installer
+          binarycreator --offline-only -c config/config.xml -p packages \
+            -e org.opengribs.xygrib.maps \
+            "$GITHUB_WORKSPACE/XyGrib_Win_Installer.exe"
+
+      # Smoke-test the silent install. If the wizard GUI appears (e.g. an older
+      # QtIFW), the process never exits and the timeout fails the job.
+      - name: Test silent install
+        shell: pwsh
+        run: |
+          $installer = "$env:GITHUB_WORKSPACE\XyGrib_Win_Installer.exe"
+          $target = "$env:RUNNER_TEMP\xygrib-install"
+          $p = Start-Process -FilePath $installer -PassThru -ArgumentList `
+            'install','--accept-licenses','--accept-messages','--confirm-command','--default-answer','--root',$target
+          if (-not $p.WaitForExit(180000)) {
+            $p.Kill()
+            throw "Installer did not exit within 180s - the GUI was likely shown (not silent)"
+          }
+          if ($p.ExitCode -ne 0) { throw "Installer failed with exit code $($p.ExitCode)" }
+          if (-not (Test-Path "$target\XyGrib.exe")) { throw "XyGrib.exe was not installed" }
+          Write-Host "Silent install succeeded: $target\XyGrib.exe"
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: XyGrib_Win_Installer
+          path: XyGrib_Win_Installer.exe
+
+      - name: Publish to 'latest' release
+        if: github.event_name == 'push' || inputs.publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest development build
+          prerelease: true
+          make_latest: "false"
+          body: |
+            Rolling development build of the XyGrib Windows installer.
+            Built from ${{ github.sha }}.
+          files: XyGrib_Win_Installer.exe
