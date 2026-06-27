@@ -15,7 +15,6 @@
         </Repository>
     </RemoteRepositories>
 	<MaintenanceToolName>XyGribMaintenanceTool</MaintenanceToolName>
-	<ControlScript>controlscript.qs</ControlScript>
 	<WizardStyle>Modern</WizardStyle>
 	<WizardDefaultWidth>620</WizardDefaultWidth>
 	<InstallActionColumnVisible>true</InstallActionColumnVisible>
