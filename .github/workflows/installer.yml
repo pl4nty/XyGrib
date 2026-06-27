@@ -4,12 +4,13 @@ name: Windows installer
 # installer, smoke-tests a fully silent install, and publishes the installers to
 # a rolling "latest" pre-release.
 #
-# Triggered on merge to main, or manually (workflow_dispatch) so it can be tested
-# without a merge. Manual runs can opt out of publishing via the "publish" input.
+# Triggered on merge to master, or manually (workflow_dispatch) so it can be
+# tested without a merge. Manual runs can opt out of publishing via the
+# "publish" input.
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   workflow_dispatch:
     inputs:
       publish:
